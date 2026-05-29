@@ -1,1 +1,68 @@
+ip firewall address-list
+add address=192.168.2.0/24 comment=ISP list=LOKAL
+add address=192.168.14.0/24 comment=PPPOE list=LOKAL
+add address=192.168.100.1 list=IP-MODEM
+add address=192.168.1.1 comment="IP-STARLINK BLOK" list=IP-MODEM
+add address=10.10.10.0/24 list=LOKAL
+add address=12.12.12.0/24 comment=MGMT list=LOKAL
+add address=31.13.64.0/18 disabled=yes list=WHATSAPP
+add address=157.240.0.0/16 disabled=yes list=WHATSAPP
+add address=129.134.0.0/16 disabled=yes list=WHATSAPP
+add address=66.220.144.0/20 disabled=yes list=WHATSAPP
+add address=69.63.176.0/20 disabled=yes list=WHATSAPP
+add address=10.100.0.0/24 comment="HOTSPOT BARU" list=LOKAL
+/ip firewall connection tracking
+set tcp-established-timeout=1h tcp-syn-sent-timeout=10s udp-timeout=10s
+/ip firewall filter
+add action=accept chain=input comment="INPUT ESTABLISHED" connection-state=established,related
+add action=drop chain=input comment="DROP INVALID INPUT" connection-state=invalid
+add action=accept chain=input comment="ALLOW ICMP" protocol=icmp
+add action=drop chain=input comment="BLOCK WAN ISP1" in-interface=ether1_isp1
+add action=drop chain=input comment="BLOCK WAN ISP2" in-interface=ether2_isp2
+add action=drop chain=input comment="BLOCK WAN ISP3" in-interface=ether3_isp3
+add action=accept chain=forward comment="ESTABLISHED FORWARD" connection-state=established,related
+add action=drop chain=forward comment="DROP INVALID FORWARD" connection-state=invalid
+add action=drop chain=forward comment=ISOLIR src-address-list=ISOLIR-LIST
+add action=accept chain=forward comment=OLT dst-address=12.12.12.253 src-address-list=LOKAL
+add action=accept chain=forward comment="HOTSPOT TO MGMT" dst-address=12.12.12.0/24 src-address=10.100.0.0/24
+add action=accept chain=forward comment="HOTSPOT TO LOCAL DEVICE" dst-address=192.168.14.0/24 src-address=10.100.0.0/24
+add action=drop chain=forward comment="BLOCK DHCP TETHERING" dst-port=67-68 protocol=udp src-address=10.100.0.0/24
+add action=add-dst-to-address-list address-list=IP-MODEM address-list-timeout=none-dynamic chain=forward comment="BLOKIR IP STARLINK" connection-state=new dst-port=9201 protocol=tcp
+add action=drop chain=forward comment="BLOKIR IP STARLINK" dst-address-list=IP-MODEM dst-port=80,9000,9100,9200 port="" protocol=tcp
+add action=passthrough chain=unused-hs-chain comment="place hotspot rules here" disabled=yes
+/ip firewall mangle
+add action=accept chain=prerouting comment="Local Traffic Bypass" dst-address-list=LOKAL src-address-list=LOKAL
+add action=accept chain=prerouting comment="BYPASS HOTSPOT PCC" src-address=10.100.0.0/24
+add action=accept chain=prerouting comment="PAGE LANDING HOTSPOT" hotspot=http
+add action=accept chain=prerouting comment="BYPASS khusus VPN dari OVPN" dst-port=1194 protocol=tcp
+add action=mark-connection chain=prerouting comment="GAME TO ISP3" connection-mark=no-mark dst-address-list=GAME_SERVER dst-address-type=!local new-connection-mark=GAME_ISP3 src-address-list=\
+    LOKAL
+add action=mark-routing chain=prerouting comment="GAME ISP3 OS7" connection-mark=GAME_ISP3 dst-address-list=!LOKAL new-routing-mark=to_ISP3 passthrough=no src-address-list=LOKAL
+add action=mark-connection chain=prerouting comment=PCC_CLASSIFIER_ISP1 connection-mark=no-mark dst-address-list=!LOKAL new-connection-mark=ether1_isp1 per-connection-classifier=\
+    both-addresses-and-ports:3/0 src-address-list=LOKAL
+add action=mark-connection chain=prerouting comment=PCC_CLASSIFIER_ISP2 connection-mark=no-mark dst-address-list=!LOKAL new-connection-mark=ether2_isp2 per-connection-classifier=\
+    both-addresses-and-ports:3/1 src-address-list=LOKAL
+add action=mark-connection chain=prerouting comment=PCC_CLASSIFIER_ISP3 connection-mark=no-mark dst-address-list=!LOKAL new-connection-mark=ether3_isp3 per-connection-classifier=\
+    both-addresses-and-ports:3/2 src-address-list=LOKAL
+add action=mark-routing chain=prerouting comment="LBB PCC ROUTE ISP1 OS7" connection-mark=ether1_isp1 dst-address-list=!LOKAL new-routing-mark=to_ISP1 passthrough=no src-address-list=LOKAL
+add action=mark-routing chain=prerouting comment="ROUTE ISP2 OS7" connection-mark=ether2_isp2 dst-address-list=!LOKAL new-routing-mark=to_ISP2 passthrough=no src-address-list=LOKAL
+add action=mark-routing chain=prerouting comment="ROUTE ISP3 OS7" connection-mark=ether3_isp3 dst-address-list=!LOKAL new-routing-mark=to_ISP3 passthrough=no src-address-list=LOKAL
+add action=change-ttl chain=postrouting comment="anti tethering" dst-address=10.100.0.0/24 new-ttl=set:64 out-interface=VLAN100_HOTSPOT passthrough=no
+/ip firewall nat
+add action=passthrough chain=unused-hs-chain comment="place hotspot rules here" disabled=yes
+add action=redirect chain=dstnat comment="NOTIF REDIRECT PPPoE ISOLIR" dst-port=80,443 protocol=tcp src-address-list=ISOLIR-LIST to-ports=8085
+add action=masquerade chain=srcnat comment="Global NAT for Load Balancing" out-interface=ether1_isp1
+add action=masquerade chain=srcnat comment="Global NAT for Load Balancing" out-interface=ether2_isp2
+add action=masquerade chain=srcnat comment="Global NAT for Load Balancing" out-interface=ether3_isp3
+add action=masquerade chain=srcnat comment="masquerade hotspot network" src-address=10.100.0.0/24
+add action=dst-nat chain=dstnat comment="REMOTE OLT via OVN" disabled=yes dst-address=10.8.4.228 dst-port=8787 protocol=tcp to-addresses=12.12.12.253 to-ports=80
+/ip firewall raw
+add action=accept chain=prerouting comment="BYPASS TRAFIK LOKAL" dst-address-list=LOKAL src-address-list=LOKAL
+add action=add-dst-to-address-list address-list=GAME_SERVER address-list-timeout=1d chain=prerouting comment="ML SERVER LEARN" dst-port=5000-5221,5224-5241,5243,5285-5287,5500-5700,9000-9010 \
+    protocol=udp src-address-list=LOKAL
+add action=add-dst-to-address-list address-list=GAME_SERVER address-list-timeout=1d chain=prerouting comment="FF SERVER LEARN" dst-port=\
+    6006,6008,6674,7000-7999,8001-8012,9006,9137,10000-10015 protocol=udp src-address-list=LOKAL
+add action=add-dst-to-address-list address-list=GAME_SERVER address-list-timeout=1d chain=prerouting comment="PUBG SERVER LEARN" dst-port=7889,10012,13004,14000,17000,17500,18081,20000-20002 \
+    protocol=udp src-address-list=LOKAL
+
 
